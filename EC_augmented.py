@@ -1,5 +1,4 @@
-from itertools import product
-from statistics import mode
+import itertools
 
 import numpy as np
 import pyomo.environ as pyo
@@ -66,7 +65,8 @@ class Augmented():
         model.c = pyo.Param(model.k, initialize=np.ndenumerate(self._obj_coefficients))
         model.b = pyo.Param(model.i, initialize=np.ndenumerate(self._cons_values))
 
-        model.x = pyo.Var(domain=pyo.Reals)
+        model.x = pyo.Var(model.j, domain=pyo.Reals)
+        model.s = pyo.Var(model.k-1, domain=pyo.Reals)
 
         def cons_rule(model, i):
             return sum(model.a[i, j]*model.x[j] for j in model.j)
@@ -100,7 +100,7 @@ class Augmented():
         self.income_matrix = income_matrix
 
     def calculate_epsilon(self):
-        r_k = np.empty(self.k)
+        r_k = np.array([])
         for k in self.k:
             if k == self.primary_obj:
                 continue
@@ -110,7 +110,7 @@ class Augmented():
             f_best = self.income_matrix[:, indices[-1]]
 
             r = f_worst - f_best
-            r_k.append(r)
+            r_k = np.append(r_k, r)
         
         epsilon = np.array([])
         for k in self.k:
@@ -120,6 +120,30 @@ class Augmented():
             eps = np.empty(self.step)
             for st in self.step:
                 eps[st] = self.income_matrix[k, k] + r_k[k]*st/self.step
-            epsilon = np.append(epsilon, eps)
+            np.append(epsilon, eps)
 
-        self.epsilon = epsilon
+        self.epsilon_combination = itertools.product(*epsilon)
+
+    def augmented(self):
+        all_x = np.array([])
+        all_f = np.array([])
+        for epsilon in self.epsilon_combination:
+            self.model.epsilon = pyo.Param(self.model.k-1, enumerate(epsilon))
+            self.model.obj = pyo.Objective(
+                expr=sum(self.model.c[self.primary_obj, j]*self.model.x[j] for j in self.model.j)
+                - self.BETA*sum(self.model.s[k] for k in self.model.k-1)
+            )
+
+
+            def cons_rule(model, k):
+                new_c = np.delete(self.model.c, self.primary_obj, 0)
+                return sum(new_c[k, j]*model.x[j] for j in model.j) + model.s[k] == model.epsilon[k]
+            self.model.epsilon_cons = pyo.Constraint(self.model.k-1, rule=cons_rule)
+
+            x = np.array([pyo.value(var) for var in self.model.x])
+            f = np.array([pyo.value(self.model.obj)])
+
+            np.append(all_x, x)
+            np.append(all_f, f)
+
+        return all_f.min()
