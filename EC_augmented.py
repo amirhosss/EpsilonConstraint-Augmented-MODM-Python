@@ -11,11 +11,16 @@ class Augmented():
     def __init__(
         self,
         shape: tuple[int],
+        step: int,
+        primary_obj: int,
         obj_coefficients: list[list],
         cons_coefficients: list[list],
         cons_values: list
+
     ) -> None:
         self.i, self.j, self.k = shape
+        self.step = step
+        self.primary_obj = primary_obj
         self._obj_coefficients = np.array(obj_coefficients)
         self._cons_coefficients = np.array(cons_coefficients)
         self._cons_values = np.array(cons_values)
@@ -88,8 +93,33 @@ class Augmented():
             for n in self.k:
                 if m == n:
                     income_matrix[m, n] = pyo.value(self.model.obj)
-                else:
-                    x = [pyo.value(var) for var in self.model.x]
-                    income_matrix[m, n] = self.obj_function(self._obj_coefficients[n], x)
+                    continue
+                x = [pyo.value(var) for var in self.model.x]
+                income_matrix[m, n] = self.obj_function(self._obj_coefficients[n], x)
         
         self.income_matrix = income_matrix
+
+    def calculate_epsilon(self):
+        r_k = np.empty(self.k)
+        for k in self.k:
+            if k == self.primary_obj:
+                continue
+            indices = self.income_matrix[:, k].argsort()
+
+            f_worst = self.income_matrix[:, indices[-2]]
+            f_best = self.income_matrix[:, indices[-1]]
+
+            r = f_worst - f_best
+            r_k.append(r)
+        
+        epsilon = np.array([])
+        for k in self.k:
+            if k == self.primary_obj:
+                continue
+
+            eps = np.empty(self.step)
+            for st in self.step:
+                eps[st] = self.income_matrix[k, k] + r_k[k]*st/self.step
+            epsilon = np.append(epsilon, eps)
+
+        self.epsilon = epsilon
