@@ -1,5 +1,4 @@
 from itertools import product
-from turtle import shape
 
 import numpy as np
 import pyomo.environ as pyo
