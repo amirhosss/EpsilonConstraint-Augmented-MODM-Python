@@ -1,4 +1,5 @@
 from itertools import product
+from statistics import mode
 
 import numpy as np
 import pyomo.environ as pyo
@@ -15,9 +16,9 @@ class Augmented():
         cons_values: list
     ) -> None:
         self.i, self.j, self.k = shape
-        self._obj_coefficients = obj_coefficients
-        self._cons_coefficients = cons_coefficients
-        self._cons_values = cons_values
+        self._obj_coefficients = np.array(obj_coefficients)
+        self._cons_coefficients = np.array(cons_coefficients)
+        self._cons_values = np.array(cons_values)
 
     @property
     def obj_coefficients(self):
@@ -65,3 +66,30 @@ class Augmented():
         def cons_rule(model, i):
             return sum(model.a[i, j]*model.x[j] for j in model.j)
         model.cons = pyo.Constraint(model.i, rule=cons_rule)
+
+        self.model = model
+    
+    def obj_function(self, coefficient: list, *x):
+        coefficient = np.array(coefficient).reshape(-1, 1)
+        x = np.array(x)
+
+        return np.dot(coefficient, x)
+
+    def calculate_income_matrix(self):
+        income_matrix = np.empty((self.k, self.k))
+
+        for m in self.k:
+            self.model.obj = pyo.Objective(
+                expr=sum(self.model.c[m, j]*self.model.x[j] for j in self.model.j)
+            )
+            opt = pyo.SolverFactory('cplex')
+            opt.solve(self.model)
+
+            for n in self.k:
+                if m == n:
+                    income_matrix[m, n] = pyo.value(self.model.obj)
+                else:
+                    x = [pyo.value(var) for var in self.model.x]
+                    income_matrix[m, n] = self.obj_function(self._obj_coefficients[n], x)
+        
+        self.income_matrix = income_matrix
