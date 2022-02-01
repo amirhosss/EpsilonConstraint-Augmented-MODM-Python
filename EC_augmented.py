@@ -2,9 +2,11 @@ import itertools
 
 import numpy as np
 import pyomo.environ as pyo
+import matplotlib.pyplot as plt
 
 
 class Augmented():
+    MAX_PLOT_OBJ = 2
     BETA = 1e-4
 
     def __init__(
@@ -54,96 +56,159 @@ class Augmented():
             raise ValueError('Data shape does not match with Constraint values.')
         self._cons_values = value
 
-    def model_concepts(self):
+    def model_concepts(self) -> None:
         model = pyo.ConcreteModel()
 
         model.i = pyo.RangeSet(0, self.i-1)
         model.j = pyo.RangeSet(0, self.j-1)
         model.k = pyo.RangeSet(0, self.k-1)
+        model.z = pyo.RangeSet(0, self.k-2)
 
-        model.a = pyo.Param(model.i, initialzie=np.ndenumerate(self._cons_coefficients))
-        model.c = pyo.Param(model.k, initialize=np.ndenumerate(self._obj_coefficients))
-        model.b = pyo.Param(model.i, initialize=np.ndenumerate(self._cons_values))
+        model.a = pyo.Param(model.i, model.j, initialize=dict(np.ndenumerate(self._cons_coefficients)))
+        model.c = pyo.Param(model.k, model.j, initialize=dict(np.ndenumerate(self._obj_coefficients)))
+        model.b = pyo.Param(model.i, initialize=dict(np.ndenumerate(self._cons_values)))
 
-        model.x = pyo.Var(model.j, domain=pyo.Reals)
-        model.s = pyo.Var(model.k-1, domain=pyo.Reals)
+        model.x = pyo.Var(model.j, domain=pyo.NonNegativeReals)
+        model.s = pyo.Var(pyo.RangeSet(0, self.k-2), domain=pyo.NonNegativeReals)
 
         def cons_rule(model, i):
-            return sum(model.a[i, j]*model.x[j] for j in model.j)
+            return sum(model.a[i, j]*model.x[j] for j in model.j) <= model.b[i]
         model.cons = pyo.Constraint(model.i, rule=cons_rule)
 
         self.model = model
     
-    def obj_function(self, coefficient: list, *x):
+    def obj_function(self, coefficient: list, *x) -> np.ndarray:
         coefficient = np.array(coefficient).reshape(-1, 1)
         x = np.array(x)
 
-        return np.dot(coefficient, x)
+        return np.dot(x, coefficient)
 
-    def calculate_income_matrix(self):
+    def calculate_income_matrix(self) -> None:
         income_matrix = np.empty((self.k, self.k))
 
-        for m in self.k:
+        for m in range(self.k):
             self.model.obj = pyo.Objective(
                 expr=sum(self.model.c[m, j]*self.model.x[j] for j in self.model.j)
             )
             opt = pyo.SolverFactory('cplex')
             opt.solve(self.model)
 
-            for n in self.k:
+            for n in range(self.k):
                 if m == n:
                     income_matrix[m, n] = pyo.value(self.model.obj)
                     continue
-                x = [pyo.value(var) for var in self.model.x]
-                income_matrix[m, n] = self.obj_function(self._obj_coefficients[n], x)
+                x = [pyo.value(self.model.x[j]) for j in self.model.j]
+                income_matrix[m, n] = self.obj_function(self._obj_coefficients[n], *x)
+
+            self.model.del_component(self.model.obj)
         
         self.income_matrix = income_matrix
 
-    def calculate_epsilon(self):
-        r_k = np.array([])
-        for k in self.k:
+    def calculate_epsilon(self) -> None:
+        r_k = {}
+        for k in range(self.k):
             if k == self.primary_obj:
                 continue
+
             indices = self.income_matrix[:, k].argsort()
 
-            f_worst = self.income_matrix[:, indices[-2]]
-            f_best = self.income_matrix[:, indices[-1]]
+            f_worst = self.income_matrix[:, k][indices[-1]]
+            f_best = self.income_matrix[:, k][indices[0]]
 
             r = f_worst - f_best
-            r_k = np.append(r_k, r)
+            r_k[k] = r
         
-        epsilon = np.array([])
-        for k in self.k:
+        epsilon = {}
+        for k in range(self.k):
             if k == self.primary_obj:
                 continue
 
-            eps = np.empty(self.step)
-            for st in self.step:
+            eps = np.empty(self.step+1)
+            for st in range(self.step+1):
                 eps[st] = self.income_matrix[k, k] + r_k[k]*st/self.step
-            np.append(epsilon, eps)
+            
+            epsilon[k] = eps
 
-        self.epsilon_combination = itertools.product(*epsilon)
+        self.epsilon_combination = np.array(list(itertools.product(*list(epsilon.values()))))
 
-    def augmented(self):
-        all_x = np.array([])
-        all_f = np.array([])
+    def augmented(self) -> None:
+        all_x = []
+
         for epsilon in self.epsilon_combination:
-            self.model.epsilon = pyo.Param(self.model.k-1, enumerate(epsilon))
+            self.model.epsilon = pyo.Param(self.model.z, initialize=dict(enumerate(epsilon)))
             self.model.obj = pyo.Objective(
                 expr=sum(self.model.c[self.primary_obj, j]*self.model.x[j] for j in self.model.j)
-                - self.BETA*sum(self.model.s[k] for k in self.model.k-1)
+                - self.BETA*sum(self.model.s[k] for k in self.model.z)
             )
-
 
             def cons_rule(model, k):
                 new_c = np.delete(self.model.c, self.primary_obj, 0)
                 return sum(new_c[k, j]*model.x[j] for j in model.j) + model.s[k] == model.epsilon[k]
-            self.model.epsilon_cons = pyo.Constraint(self.model.k-1, rule=cons_rule)
+            self.model.epsilon_cons = pyo.Constraint(self.model.z, rule=cons_rule)
 
-            x = np.array([pyo.value(var) for var in self.model.x])
-            f = np.array([pyo.value(self.model.obj)])
+            opt = pyo.SolverFactory('cplex')
+            opt.solve(self.model)
+            
+            x = np.array([pyo.value(self.model.x[j]) for j in self.model.j])
+            all_x.append(x)
 
-            np.append(all_x, x)
-            np.append(all_f, f)
+            self.model.del_component(self.model.epsilon)
+            self.model.del_component(self.model.obj)
+            self.model.del_component(self.model.epsilon_cons)
 
-        return all_f.min()
+        self.all_x = all_x
+
+    def plot_objectives(self, objectives: tuple[int]) -> None:
+        if len(objectives) != self.MAX_PLOT_OBJ:
+            raise ValueError('Wrong objectives tuple')
+        all_objs = [
+            [self.obj_function(self._obj_coefficients[objectives[0]], *x) for x in self.all_x],
+            [self.obj_function(self._obj_coefficients[objectives[1]], *x) for x in self.all_x]
+        ]
+        plt.plot(*all_objs, '-bo')
+        plt.xlabel('Objective function 1')
+        plt.ylabel('Objective function 2')
+        plt.grid()
+        plt.show()
+
+
+    def run(self, output=False) -> None:
+        self.model_concepts()
+        self.calculate_income_matrix()
+        self.calculate_epsilon()
+        self.augmented()
+        
+        if output:
+            print(self.all_x) 
+
+# Example
+I, J, K = [9, 3, 2]
+
+Ckj = [
+    [-35, -40, -38],
+    [20, 22, 25]
+]
+Aij = [
+    [2, 1.75, 2.1],
+    [0.5, 0.6, 0.5],
+    [35, 40, 38],
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1]
+]
+Bi = [20_000, 15_000, 450_000, 5_000, -3_000, 7_000, -4_000, 4_000, -2_000]
+
+obj = Augmented(
+    (9, 3, 2),
+    50,
+    0,
+    Ckj,
+    Aij,
+    Bi
+)
+
+obj.run()
+obj.plot_objectives((0, 1))
