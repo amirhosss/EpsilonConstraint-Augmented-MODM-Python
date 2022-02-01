@@ -1,4 +1,5 @@
 import itertools
+# from typing import Optional
 
 import numpy as np
 import pyomo.environ as pyo
@@ -13,18 +14,15 @@ class Augmented():
         self,
         shape: tuple[int],
         step: int,
-        primary_obj: int,
-        obj_coefficients: list[list],
-        cons_coefficients: list[list],
-        cons_values: list
+        primary_obj: int
 
     ) -> None:
         self.i, self.j, self.k = shape
         self.step = step
         self.primary_obj = primary_obj
-        self._obj_coefficients = np.array(obj_coefficients)
-        self._cons_coefficients = np.array(cons_coefficients)
-        self._cons_values = np.array(cons_values)
+        self._obj_coefficients = None
+        self._cons_coefficients = None
+        self._cons_values = None
 
     @property
     def obj_coefficients(self):
@@ -32,7 +30,7 @@ class Augmented():
     
     @obj_coefficients.setter
     def obj_coefficients(self, value):
-        if len(value) != self.shape[2]:
+        if len(value) != self.k:
             raise ValueError('Data shape does not match with Objective coefficients.')
         self._obj_coefficients = value 
 
@@ -42,7 +40,7 @@ class Augmented():
 
     @cons_coefficients.setter
     def cons_coefficients(self, value):
-        if len(value) != self.shape[0]:
+        if len(value) != self.i:
             raise ValueError('Data shape does not match Constraint coefficients.')
         self._cons_coefficients = value
 
@@ -52,7 +50,7 @@ class Augmented():
 
     @cons_values.setter
     def cons_values(self, value):
-        if len(value) != self.shape[0]:
+        if len(value) != self.i:
             raise ValueError('Data shape does not match with Constraint values.')
         self._cons_values = value
 
@@ -177,9 +175,9 @@ class Augmented():
             [self.obj_function(self._obj_coefficients[objectives[0]], *x) for x in self.all_x],
             [self.obj_function(self._obj_coefficients[objectives[1]], *x) for x in self.all_x]
         ]
-        plt.plot(*all_objs)
-        plt.xlabel('Objective function 1')
-        plt.ylabel('Objective function 2')
+        plt.plot(*all_objs, 'bo')
+        plt.xlabel('Objective function '+str(objectives[0]))
+        plt.ylabel('Objective function '+str(objectives[1]))
         plt.grid()
         plt.show()
 
@@ -192,36 +190,3 @@ class Augmented():
         
         if output:
             print(self.all_x) 
-
-# Example
-I, J, K = [9, 3, 2]
-
-Ckj = [
-    [35, 40, 38],
-    [-20, -22, -25],
-    [10, 50, 20]
-]
-Aij = [
-    [2, 1.75, 2.1],
-    [0.5, 0.6, 0.5],
-    [35, 40, 38],
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 1, 0],
-    [0, -1, 0],
-    [0, 0, 1],
-    [0, 0, -1]
-]
-Bi = [20_000, 15_000, 450_000, 5_000, -3_000, 7_000, -4_000, 4_000, -2_000]
-
-obj = Augmented(
-    (9, 3, 3),
-    10,
-    0,
-    Ckj,
-    Aij,
-    Bi
-)
-
-obj.run(version='v1')
-obj.plot_objectives((1, 2))
