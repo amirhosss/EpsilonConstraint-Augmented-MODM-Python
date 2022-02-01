@@ -71,7 +71,7 @@ class Augmented():
         model.x = pyo.Var(model.j, domain=pyo.NonNegativeReals)
         model.s = pyo.Var(pyo.RangeSet(0, self.k-2), domain=pyo.NonNegativeReals)
 
-        def cons_rule(model, i):
+        def cons_rule(model: pyo.ConcreteModel, i: int):
             return sum(model.a[i, j]*model.x[j] for j in model.j) <= model.b[i]
         model.cons = pyo.Constraint(model.i, rule=cons_rule)
 
@@ -117,6 +117,8 @@ class Augmented():
 
             r = f_worst - f_best
             r_k[k] = r
+
+        self.r_k = r_k
         
         epsilon = {}
         for k in range(self.k):
@@ -131,17 +133,27 @@ class Augmented():
 
         self.epsilon_combination = np.array(list(itertools.product(*list(epsilon.values()))))
 
-    def augmented(self) -> None:
+    def augmented(self, version: str ='v1') -> None:
+        if not version in ['v1', 'v2']:
+            raise ValueError('Version is not correct.')
+
         all_x = []
+        obj_versions ={
+            'v1': pyo.Objective(
+                expr=sum(self.model.c[self.primary_obj, j]*self.model.x[j] for j in self.model.j)
+                - self.BETA*sum(self.model.s[k]/list(self.r_k.keys())[k] for k in self.model.z)
+            ),
+            'v2': pyo.Objective(
+                expr=sum(self.model.c[self.primary_obj, j]*self.model.x[j] for j in self.model.j)
+                - self.BETA*sum(self.model.s[k]/list(self.r_k.keys())[k] for k in self.model.z)
+            )
+        }
 
         for epsilon in self.epsilon_combination:
             self.model.epsilon = pyo.Param(self.model.z, initialize=dict(enumerate(epsilon)))
-            self.model.obj = pyo.Objective(
-                expr=sum(self.model.c[self.primary_obj, j]*self.model.x[j] for j in self.model.j)
-                - self.BETA*sum(self.model.s[k] for k in self.model.z)
-            )
+            self.model.obj = obj_versions[version]
 
-            def cons_rule(model, k):
+            def cons_rule(model: pyo.ConcreteModel, k: int):
                 new_c = np.delete(self.model.c, self.primary_obj, 0)
                 return sum(new_c[k, j]*model.x[j] for j in model.j) + model.s[k] == model.epsilon[k]
             self.model.epsilon_cons = pyo.Constraint(self.model.z, rule=cons_rule)
@@ -165,18 +177,18 @@ class Augmented():
             [self.obj_function(self._obj_coefficients[objectives[0]], *x) for x in self.all_x],
             [self.obj_function(self._obj_coefficients[objectives[1]], *x) for x in self.all_x]
         ]
-        plt.plot(*all_objs, '-bo')
+        plt.plot(*all_objs)
         plt.xlabel('Objective function 1')
         plt.ylabel('Objective function 2')
         plt.grid()
         plt.show()
 
 
-    def run(self, output=False) -> None:
+    def run(self, output=False, version='v1') -> None:
         self.model_concepts()
         self.calculate_income_matrix()
         self.calculate_epsilon()
-        self.augmented()
+        self.augmented(version=version)
         
         if output:
             print(self.all_x) 
@@ -185,8 +197,9 @@ class Augmented():
 I, J, K = [9, 3, 2]
 
 Ckj = [
-    [-35, -40, -38],
-    [20, 22, 25]
+    [35, 40, 38],
+    [-20, -22, -25],
+    [10, 50, 20]
 ]
 Aij = [
     [2, 1.75, 2.1],
@@ -202,13 +215,13 @@ Aij = [
 Bi = [20_000, 15_000, 450_000, 5_000, -3_000, 7_000, -4_000, 4_000, -2_000]
 
 obj = Augmented(
-    (9, 3, 2),
-    50,
+    (9, 3, 3),
+    10,
     0,
     Ckj,
     Aij,
     Bi
 )
 
-obj.run()
-obj.plot_objectives((0, 1))
+obj.run(version='v1')
+obj.plot_objectives((1, 2))
