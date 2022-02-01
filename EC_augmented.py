@@ -67,7 +67,7 @@ class Augmented():
         model.b = pyo.Param(model.i, initialize=dict(np.ndenumerate(self._cons_values)))
 
         model.x = pyo.Var(model.j, domain=pyo.NonNegativeReals)
-        model.s = pyo.Var(pyo.RangeSet(0, self.k-2), domain=pyo.NonNegativeReals)
+        model.s = pyo.Var(model.z, domain=pyo.NonNegativeReals)
 
         def cons_rule(model: pyo.ConcreteModel, i: int):
             return sum(model.a[i, j]*model.x[j] for j in model.j) <= model.b[i]
